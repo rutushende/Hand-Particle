@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Particle Sculptor — Hand Gesture AR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --purple:#aa77ff;
+  --purple-dim:#553399;
+  --purple-dark:#1a0033;
+  --purple-glow:rgba(170,119,255,0.15);
+  --bg:#050008;
+}
+body{background:var(--bg);overflow:hidden;width:100vw;height:100vh;font-family:'Share Tech Mono',monospace;cursor:crosshair}
+
+/* ── AR LAYER ───────────────────────────── */
+#bgVideo{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);z-index:0;opacity:0;transition:opacity 1.2s}
+#arCanvas{position:absolute;top:0;left:0;width:100%;height:100%;z-index:2;pointer-events:none}
+
+/* ── HUD (visible during AR) ────────────── */
+#hud{
+  position:absolute;top:16px;left:16px;z-index:10;pointer-events:none;
+  display:none;
+}
+.hud-panel{
+  background:rgba(5,0,12,0.75);
+  border:1px solid rgba(170,119,255,0.2);
+  padding:10px 14px;border-radius:2px;
+  font-size:10px;letter-spacing:1.5px;line-height:2.1;
+  color:rgba(170,119,255,0.5);
+}
+.hud-panel b{color:var(--purple);font-weight:normal;}
+#gestureTag{
+  position:absolute;bottom:24px;left:50%;transform:translateX(-50%);
+  z-index:10;pointer-events:none;
+  font-family:'Share Tech Mono',monospace;
+  font-size:11px;letter-spacing:3px;
+  color:rgba(180,140,255,0.8);
+  text-align:center;padding:7px 22px;
+  border:1px solid rgba(120,80,200,0.35);
+  background:rgba(5,0,12,0.6);
+  border-radius:1px;
+  display:none;
+}
+#pip{
+  position:absolute;top:16px;right:16px;
+  width:110px;height:80px;
+  border:1px solid rgba(170,119,255,0.25);
+  border-radius:2px;overflow:hidden;z-index:20;
+  background:#0a0010;display:none;
+}
+#pipVideo{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+#hint{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  z-index:5;text-align:center;
+  color:rgba(170,120,255,0.3);font-family:'Share Tech Mono',monospace;
+  font-size:13px;letter-spacing:3px;line-height:3;
+  pointer-events:none;transition:opacity 2s;
+  display:none;
+}
+
+/* ── BOOT SCREEN ────────────────────────── */
+#boot{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  z-index:100;overflow:hidden;
+  background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+}
+
+/* Animated background particles canvas */
+#bootCanvas{position:absolute;top:0;left:0;width:100%;height:100%;z-index:0}
+
+/* Glow orb behind title */
+.boot-orb{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-60%);
+  width:min(500px,80vw);height:min(500px,80vw);
+  background:radial-gradient(circle,rgba(100,50,200,0.18) 0%,transparent 70%);
+  pointer-events:none;z-index:1;
+  animation:orbPulse 4s ease-in-out infinite;
+}
+@keyframes orbPulse{0%,100%{transform:translate(-50%,-60%) scale(1);opacity:0.6}50%{transform:translate(-50%,-60%) scale(1.15);opacity:1}}
+
+.boot-content{
+  position:relative;z-index:2;
+  display:flex;flex-direction:column;align-items:center;
+  gap:0;width:100%;max-width:680px;padding:0 24px;
+}
+
+/* Title */
+.boot-eyebrow{
+  font-size:10px;letter-spacing:6px;color:rgba(150,100,255,0.5);
+  margin-bottom:14px;text-align:center;
+  animation:fadeUp 0.8s ease both;
+}
+.boot-title{
+  font-family:'Orbitron',monospace;
+  font-size:clamp(32px,7vw,72px);
+  font-weight:900;
+  color:#fff;
+  letter-spacing:4px;
+  text-align:center;
+  line-height:1;
+  margin-bottom:6px;
+  animation:fadeUp 0.8s 0.1s ease both;
+  position:relative;
+}
+.boot-title .accent{
+  color:var(--purple);
+  position:relative;
+}
+.boot-title .accent::after{
+  content:'';
+  position:absolute;bottom:-4px;left:0;right:0;height:2px;
+  background:var(--purple);
+  animation:lineExpand 1s 0.8s ease both;
+  transform-origin:center;transform:scaleX(0);
+}
+@keyframes lineExpand{to{transform:scaleX(1)}}
+.boot-sub{
+  font-size:11px;letter-spacing:4px;
+  color:rgba(150,100,255,0.45);
+  text-align:center;margin-bottom:44px;
+  animation:fadeUp 0.8s 0.2s ease both;
+}
+
+/* Gesture cards */
+.gesture-grid{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:8px;width:100%;
+  margin-bottom:36px;
+  animation:fadeUp 0.8s 0.35s ease both;
+}
+@media(max-width:560px){.gesture-grid{grid-template-columns:repeat(3,1fr)}}
+.g-card{
+  background:rgba(255,255,255,0.03);
+  border:1px solid rgba(170,119,255,0.12);
+  border-radius:4px;padding:12px 8px;
+  text-align:center;
+  transition:all 0.25s;
+  cursor:default;
+}
+.g-card:hover{background:rgba(170,119,255,0.08);border-color:rgba(170,119,255,0.35)}
+.g-icon{font-size:22px;margin-bottom:6px;display:block;filter:grayscale(0.2)}
+.g-name{font-size:8px;letter-spacing:2px;color:var(--purple);display:block;margin-bottom:3px}
+.g-desc{font-size:8px;color:rgba(255,255,255,0.25);letter-spacing:0.5px;display:block;line-height:1.5}
+
+/* Loading section */
+.boot-loading{
+  width:100%;animation:fadeUp 0.8s 0.5s ease both;
+}
+.load-bar-wrap{
+  width:100%;height:1px;background:rgba(170,119,255,0.12);
+  margin-bottom:12px;position:relative;overflow:hidden;
+}
+#bFill{
+  height:100%;background:var(--purple);width:0%;
+  transition:width 0.4s cubic-bezier(.4,0,.2,1);
+  position:relative;
+}
+#bFill::after{
+  content:'';position:absolute;right:0;top:-2px;
+  width:4px;height:5px;
+  background:white;border-radius:50%;
+  box-shadow:0 0 8px var(--purple);
+}
+.load-status{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:8px;
+}
+#loadMsg{font-size:10px;color:rgba(170,119,255,0.5);letter-spacing:1px}
+#loadPct{font-size:10px;color:rgba(170,119,255,0.35);letter-spacing:1px}
+
+/* START button */
+#bBtn{
+  font-family:'Orbitron',monospace;
+  font-size:12px;font-weight:700;
+  letter-spacing:5px;
+  padding:16px 48px;
+  background:transparent;
+  border:1px solid var(--purple);
+  color:var(--purple);
+  cursor:pointer;
+  border-radius:2px;
+  margin-top:20px;
+  display:none;
+  position:relative;
+  overflow:hidden;
+  transition:color 0.2s;
+  animation:fadeUp 0.6s ease both;
+}
+#bBtn::before{
+  content:'';position:absolute;inset:0;
+  background:var(--purple);
+  transform:translateX(-101%);
+  transition:transform 0.3s cubic-bezier(.4,0,.2,1);
+  z-index:0;
+}
+#bBtn:hover{color:#000}
+#bBtn:hover::before{transform:translateX(0)}
+#bBtn span{position:relative;z-index:1}
+
+/* Corner decorations */
+.boot-corner{position:absolute;width:20px;height:20px;z-index:3}
+.boot-corner.tl{top:20px;left:20px;border-top:1px solid rgba(170,119,255,0.3);border-left:1px solid rgba(170,119,255,0.3)}
+.boot-corner.tr{top:20px;right:20px;border-top:1px solid rgba(170,119,255,0.3);border-right:1px solid rgba(170,119,255,0.3)}
+.boot-corner.bl{bottom:20px;left:20px;border-bottom:1px solid rgba(170,119,255,0.3);border-left:1px solid rgba(170,119,255,0.3)}
+.boot-corner.br{bottom:20px;right:20px;border-bottom:1px solid rgba(170,119,255,0.3);border-right:1px solid rgba(170,119,255,0.3)}
+
+/* scan line animation on boot */
+.boot-scan{
+  position:absolute;top:0;left:0;width:100%;height:2px;
+  background:linear-gradient(90deg,transparent,rgba(170,119,255,0.3),transparent);
+  z-index:3;animation:scanDown 4s linear infinite;
+}
+@keyframes scanDown{0%{top:-2px}100%{top:100%}}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+
+<video id="bgVideo" autoplay muted playsinline></video>
+<canvas id="arCanvas"></canvas>
+<div id="pip"><video id="pipVideo" autoplay muted playsinline></video></div>
+
+<div id="hud">
+  <div class="hud-panel">
+    PARTICLES <b id="pC">—</b><br>
+    HANDS&nbsp;&nbsp;&nbsp;&nbsp; <b id="hC">0</b><br>
+    GESTURE&nbsp; <b id="gC">—</b><br>
+    FPS&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b id="fC">—</b>
+  </div>
+</div>
+<div id="gestureTag">SHOW YOUR HANDS</div>
+<div id="hint">RAISE YOUR HANDS<br><span style="font-size:10px;letter-spacing:2px;color:rgba(160,100,255,0.25)">gestures control the particles</span></div>
+
+<!-- BOOT SCREEN -->
+<div id="boot">
+  <canvas id="bootCanvas"></canvas>
+  <div class="boot-scan"></div>
+  <div class="boot-corner tl"></div>
+  <div class="boot-corner tr"></div>
+  <div class="boot-corner bl"></div>
+  <div class="boot-corner br"></div>
+  <div class="boot-orb"></div>
+
+  <div class="boot-content">
+    <div class="boot-eyebrow">GESTURE-DRIVEN AR EXPERIENCE</div>
+    <div class="boot-title">PARTICLE<br><span class="accent">SCULPTOR</span></div>
+    <div class="boot-sub">HAND TRACKING · 7000 PARTICLES · 5 MODES</div>
+
+    <div class="gesture-grid">
+      <div class="g-card">
+        <span class="g-icon">🤏</span>
+        <span class="g-name">PINCH</span>
+        <span class="g-desc">compress particles to fist</span>
+      </div>
+      <div class="g-card">
+        <span class="g-icon">🖐</span>
+        <span class="g-name">OPEN PALM</span>
+        <span class="g-desc">burst explosion</span>
+      </div>
+      <div class="g-card">
+        <span class="g-icon">✌️</span>
+        <span class="g-name">PEACE SIGN</span>
+        <span class="g-desc">heart shape</span>
+      </div>
+      <div class="g-card">
+        <span class="g-icon">☝️</span>
+        <span class="g-name">ONE FINGER</span>
+        <span class="g-desc">live tornado</span>
+      </div>
+      <div class="g-card">
+        <span class="g-icon">🙌</span>
+        <span class="g-name">TWO HANDS</span>
+        <span class="g-desc">grid sphere</span>
+      </div>
+    </div>
+
+    <div class="boot-loading">
+      <div class="load-status">
+        <span id="loadMsg">INITIALIZING...</span>
+        <span id="loadPct">0%</span>
+      </div>
+      <div class="load-bar-wrap"><div id="bFill"></div></div>
+    </div>
+
+    <button id="bBtn"><span>LAUNCH EXPERIENCE</span></button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script>
+// ─── CANVAS & STATE ───────────────────────────────────────
+const bgVideo    = document.getElementById('bgVideo');
+const pipVideo   = document.getElementById('pipVideo');
+const arCanvas   = document.getElementById('arCanvas');
+const ctx        = arCanvas.getContext('2d');
+const bootEl     = document.getElementById('boot');
+const bFill      = document.getElementById('bFill');
+const bBtn       = document.getElementById('bBtn');
+const hintEl     = document.getElementById('hint');
+const gestureTag = document.getElementById('gestureTag');
+const loadMsg    = document.getElementById('loadMsg');
+const loadPct    = document.getElementById('loadPct');
+
+let W, H, frame=0, handData=null;
+let fpsArr=[], lastT=performance.now();
+let hintGone=false;
+
+// ─── RESIZE ───────────────────────────────────────────────
+function resize(){
+  W = arCanvas.width  = window.innerWidth;
+  H = arCanvas.height = window.innerHeight;
+}
+resize(); window.addEventListener('resize',resize);
+
+// ─── BOOT BACKGROUND PARTICLE CANVAS ─────────────────────
+(function(){
+  const bc = document.getElementById('bootCanvas');
+  const bx = bc.getContext('2d');
+  let bW, bH;
+  function bResize(){ bW=bc.width=window.innerWidth; bH=bc.height=window.innerHeight; }
+  bResize(); window.addEventListener('resize',bResize);
+  // Small floating particles for boot background
+  const bPts = Array.from({length:180},()=>({
+    x:Math.random(), y:Math.random(),
+    vx:(Math.random()-0.5)*0.0003, vy:(Math.random()-0.5)*0.0003,
+    r:Math.random()*1.5+0.3,
+    a:Math.random()*0.5+0.1,
+    hue:250+Math.random()*40,
+    phase:Math.random()*Math.PI*2
+  }));
+  let bFrame=0;
+  function bRender(){
+    if(!document.getElementById('boot') || bootEl.style.display==='none') return;
+    requestAnimationFrame(bRender);
+    bx.clearRect(0,0,bW,bH);
+    bPts.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.x<0)p.x=1; if(p.x>1)p.x=0;
+      if(p.y<0)p.y=1; if(p.y>1)p.y=0;
+      const pulse=0.4+0.4*Math.abs(Math.sin(bFrame*0.02+p.phase));
+      bx.beginPath();
+      bx.arc(p.x*bW, p.y*bH, p.r, 0, Math.PI*2);
+      bx.fillStyle=`hsla(${p.hue},70%,70%,${p.a*pulse})`;
+      bx.fill();
+    });
+    // connect nearby particles with faint lines
+    for(let i=0;i<bPts.length;i++){
+      for(let j=i+1;j<bPts.length;j++){
+        const dx=(bPts[i].x-bPts[j].x)*bW;
+        const dy=(bPts[i].y-bPts[j].y)*bH;
+        const d=Math.sqrt(dx*dx+dy*dy);
+        if(d<90){
+          bx.beginPath();
+          bx.moveTo(bPts[i].x*bW,bPts[i].y*bH);
+          bx.lineTo(bPts[j].x*bW,bPts[j].y*bH);
+          bx.strokeStyle=`rgba(150,100,255,${0.06*(1-d/90)})`;
+          bx.lineWidth=0.5;
+          bx.stroke();
+        }
+      }
+    }
+    bFrame++;
+  }
+  bRender();
+})();
+
+// ─── BOOT STATUS ──────────────────────────────────────────
+function bar(p){
+  bFill.style.width=p+'%';
+  loadPct.textContent=Math.round(p)+'%';
+}
+function setMsg(m){ loadMsg.textContent=m; }
+const bootSteps=[
+  [200,  'PARTICLE ENGINE ONLINE',      10],
+  [600,  'ALLOCATING 7000 PARTICLES',   25],
+  [1000, 'SHAPE LIBRARY LOADED',         42],
+  [1400, 'GESTURE CLASSIFIER READY',     58],
+  [1800, 'MEDIAPIPE NEURAL NET LOADING', 72],
+  [2300, 'HAND TRACKING INITIALIZING',   85],
+  [2800, 'ALL SYSTEMS READY',            100],
+];
+bootSteps.forEach(([t,m,p])=>setTimeout(()=>{setMsg(m);bar(p);},t));
+setTimeout(()=>{
+  bBtn.style.display='block';
+  setMsg('READY — CLICK TO BEGIN');
+},3100);
+
+// ─── PARTICLE CLASS ───────────────────────────────────────
+const N = 7000;
+class Particle {
+  constructor(i){
+    this.i = i;
+    this.hue  = 260 + Math.random()*60;
+    this.r    = Math.random()*1.8 + 0.4;
+    this.life = Math.random()*Math.PI*2;
+    // position & velocity
+    this.x = this.y = this.z = 0;
+    this.vx= this.vy= this.vz= 0;
+    this.tx= this.ty= this.tz= 0;
+    this.burstVx=this.burstVy=0;
+    this.bursting=false;
+    // tornado-specific
+    this.tAngle  = Math.random()*Math.PI*2;  // current spin angle
+    this.tLevel  = Math.random();             // 0=top 1=bottom
+    this.tRadius = 0;                         // current radius in tornado
+    this.tSpeed  = 0.04 + Math.random()*0.06; // angular speed
+    this.initSphere();
+  }
+  initSphere(){
+    const cx=W/2||500, cy=H/2||400, R=Math.min(W,H)*0.25;
+    const th=Math.acos(1-2*((this.i+0.5)/N));
+    const ph=Math.PI*(1+Math.sqrt(5))*(this.i+0.5);
+    this.x = cx+R*Math.sin(th)*Math.cos(ph);
+    this.y = cy+R*Math.sin(th)*Math.sin(ph)*0.7;
+    this.z = R*Math.cos(th)*0.4;
+    this.tx=this.x; this.ty=this.y; this.tz=this.z;
+  }
+  setTarget(tx,ty,tz){ this.tx=tx; this.ty=ty; this.tz=tz; }
+  burst(cx,cy){
+    this.bursting=true;
+    const a=Math.random()*Math.PI*2, spd=Math.random()*28+10;
+    this.burstVx=Math.cos(a)*spd + (this.x-cx)*0.05;
+    this.burstVy=Math.sin(a)*spd + (this.y-cy)*0.05;
+  }
+  update(attractX, attractY, attractForce, tornadoCx, tornadoCy, tornadoActive){
+    this.life+=0.025;
+    if(this.bursting){
+      this.x+=this.burstVx; this.y+=this.burstVy;
+      this.burstVx*=0.94; this.burstVy*=0.94;
+      this.x+=(this.tx-this.x)*0.008;
+      this.y+=(this.ty-this.y)*0.008;
+      if(Math.abs(this.burstVx)<0.2&&Math.abs(this.burstVy)<0.2) this.bursting=false;
+      return;
+    }
+
+    if(tornadoActive){
+      // ── LIVE TORNADO PHYSICS ──────────────────────────────
+      // Each particle orbits at its level with angular speed
+      // proportional to 1/radius (conservation of angular momentum)
+      // and rises/falls in a loop to stay in funnel
+
+      // Spin angle — faster at top (narrow tip), slower at wide base
+      const spinFactor = 1.5 - this.tLevel * 0.9; // 1.5x at top, 0.6x at bottom
+      this.tAngle += this.tSpeed * spinFactor;
+
+      // Radius grows from top (narrow) to bottom (wide) — inverted funnel
+      const R = R0();
+      const baseRadius = this.tLevel * R * 0.85 + 4;
+
+      // Slight wobble in radius
+      const wobble = Math.sin(this.tAngle * 2 + this.tLevel * 5) * R * 0.04;
+      this.tRadius = baseRadius + wobble;
+
+      // Vertical position: tLevel 0=top of funnel (narrow), 1=bottom wide
+      // Funnel spans full screen height
+      const funnelH = H * 0.78;
+      const targetY = tornadoCy - funnelH*0.5 + this.tLevel * funnelH;
+
+      // Particles slowly drift downward (gravity) and recycle from top
+      this.tLevel += 0.0008 + this.tSpeed * 0.003;
+      if(this.tLevel > 1) this.tLevel = 0; // recycle to top
+
+      // Compute 3D position
+      const tx3 = tornadoCx + Math.cos(this.tAngle) * this.tRadius;
+      const tz3 = Math.sin(this.tAngle) * this.tRadius * 0.4; // depth
+      const ty3 = targetY + (Math.random()-0.5) * 8; // slight scatter
+
+      // Smooth interpolation to tornado position
+      this.x += (tx3 - this.x) * 0.12;
+      this.y += (ty3 - this.y) * 0.10;
+      this.z += (tz3 - this.z) * 0.12;
+      return;
+    }
+
+    // Normal spring physics toward target
+    this.vx+=(this.tx-this.x)*0.05;
+    this.vy+=(this.ty-this.y)*0.05;
+    this.vz+=(this.tz-this.z)*0.05;
+    this.vx*=0.85; this.vy*=0.85; this.vz*=0.85;
+    this.x+=this.vx; this.y+=this.vy; this.z+=this.vz;
+
+    if(attractX!==null){
+      const dx=this.x-attractX, dy=this.y-attractY;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d<200){
+        this.vx+=dx/d*attractForce*(1-d/200);
+        this.vy+=dy/d*attractForce*(1-d/200);
+      }
+    }
+  }
+  draw(tornadoActive){
+    const sc=1+this.z/900;
+    const px=this.x+(this.z/700)*(this.x-W/2)*0.07;
+    const py=this.y+(this.z/700)*(this.y-H/2)*0.07;
+    const pulse=0.65+0.35*Math.abs(Math.sin(this.life));
+
+    let pr, hue, sat, lit, alpha;
+    if(tornadoActive){
+      // Tornado: larger & brighter at bottom (wide), tiny at top (tip)
+      // tLevel 0=top(narrow), 1=bottom(wide)
+      const lvlScale = 0.3 + this.tLevel * 1.4;
+      pr = Math.max(0.3, this.r * lvlScale * sc);
+      // Color: icy blue/white at top, shifting to purple/violet at bottom
+      hue = 200 + this.tLevel * 80;          // 200 cyan → 280 purple
+      sat = 70 + this.tLevel * 20;
+      lit = 80 - this.tLevel * 25;           // bright white top → deep purple bottom
+      alpha = (0.5 + this.tLevel * 0.4) * pulse;
+    } else {
+      pr = Math.max(0.3, this.r * sc);
+      hue = this.hue; sat = 72; lit = 65; alpha = 0.75 * pulse;
+    }
+    ctx.beginPath();
+    ctx.arc(px,py,pr,0,Math.PI*2);
+    ctx.fillStyle=`hsla(${hue},${sat}%,${lit}%,${alpha})`;
+    ctx.fill();
+  }
+}
+const particles=[];
+for(let i=0;i<N;i++) particles.push(new Particle(i));
+
+// ─── SHAPE GENERATORS ─────────────────────────────────────
+// All return {x,y,z} in world space (not yet placed)
+const R0 = ()=> Math.min(W,H)*0.25;
+
+function spherePos(i, cx, cy, R){
+  const th=Math.acos(1-2*((i+0.5)/N));
+  const ph=Math.PI*(1+Math.sqrt(5))*(i+0.5);
+  return {x:cx+R*Math.sin(th)*Math.cos(ph), y:cy+R*Math.sin(th)*Math.sin(ph)*0.7, z:R*Math.cos(th)*0.4};
+}
+// ─── HEART POINT LOOKUP TABLE (precomputed at startup) ────
+// We sample the heart surface parametrically - clean outline shape
+// like the reference images: particles form the OUTLINE/surface of heart
+const HEART_PTS = (function(){
+  const pts = [];
+  const layers = 3;   // depth layers for 3D volume feel
+  // Surface: use parametric heart curve, many samples per layer
+  const surfSamples = Math.ceil(N * 0.85 / layers);
+  for(let layer = 0; layer < layers; layer++){
+    const lr = 0.7 + layer * 0.15;  // radius scale per layer
+    for(let s = 0; s < surfSamples; s++){
+      const a = (s / surfSamples) * Math.PI * 2;
+      // Classic heart parametric (scaled to range ~[-1,1])
+      const hx = (16 * Math.pow(Math.sin(a), 3)) / 17;
+      const hy = -(13*Math.cos(a) - 5*Math.cos(2*a) - 2*Math.cos(3*a) - Math.cos(4*a)) / 17;
+      // tiny random spread perpendicular to surface for thickness
+      const spread = 0.04;
+      pts.push({
+        nx: hx * lr + (Math.random()-0.5)*spread,
+        ny: hy * lr + (Math.random()-0.5)*spread,
+        nz: (Math.random()-0.5) * 0.35 * lr
+      });
+    }
+  }
+  // Also fill interior uniformly using rejection sampling
+  const interiorNeeded = N - pts.length;
+  let attempts = 0;
+  while(pts.length < N && attempts < N * 20){
+    attempts++;
+    const tx = (Math.random()*2-1);
+    const ty = (Math.random()*2-1);
+    const tz = (Math.random()*2-1)*0.4;
+    // Heart implicit: (x^2+y^2-1)^3 - x^2*y^3 <= 0
+    // flip y for upward heart
+    const nx2 = tx, ny2 = -ty*1.1;
+    const inside = Math.pow(nx2*nx2+ny2*ny2-1,3) - nx2*nx2*ny2*ny2*ny2 <= 0;
+    if(inside) pts.push({nx:tx*0.95, ny:ty*0.92, nz:tz});
+  }
+  // shuffle so layers mix
+  for(let i=pts.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [pts[i],pts[j]]=[pts[j],pts[i]];
+  }
+  return pts;
+})();
+
+function heartPos(i, cx, cy){
+  const R = R0();
+  const p = HEART_PTS[i % HEART_PTS.length];
+  return {
+    x: cx + p.nx * R,
+    y: cy + p.ny * R,
+    z: p.nz * R
+  };
+}
+function tornadoPos(i, cx, cy){
+  const t=i/N;
+  const a=t*Math.PI*2*9;
+  const rad=t*R0()*(0.9+Math.random()*0.3);
+  const h=(t-0.5)*H*0.75;
+  return {x:cx+rad*Math.cos(a)+(Math.random()-0.5)*18, y:cy+h+(Math.random()-0.5)*14, z:rad*Math.sin(a)};
+}
+// Grid sphere: particles on sphere surface with lat/lon grid structure
+function gridSpherePos(i, cx, cy, R){
+  const rows=70, cols=100;
+  const ri=Math.floor(i/cols)%rows;
+  const ci=i%cols;
+  const th=(ri/rows)*Math.PI;
+  const ph=(ci/cols)*Math.PI*2;
+  const noise=(Math.random()-0.5)*4;
+  return {x:cx+R*Math.sin(th)*Math.cos(ph)+noise, y:cy+R*Math.cos(th)*0.75+noise, z:R*Math.sin(th)*Math.sin(ph)};
+}
+// Compress: all near hand center
+function compressPos(cx,cy){
+  const a=Math.random()*Math.PI*2;
+  const r=Math.random()*40;
+  return {x:cx+Math.cos(a)*r, y:cy+Math.sin(a)*r, z:(Math.random()-0.5)*20};
+}
+
+// ─── CURRENT MODE STATE ───────────────────────────────────
+let currentMode = 'idle'; // idle | compress | burst | heart | tornado | gridsphere
+let modeCenter  = {x:W/2, y:H/2};
+let sphereRotY  = 0;
+let prevHandCx  = null, prevHandCy=null;
+let wasPinching = false;
+let wasIndex    = false;
+let tornadoCx   = 0, tornadoCy = 0; // live tornado center tracks hand
+
+// ─── APPLY SHAPE ──────────────────────────────────────────
+function applyMode(mode, cx, cy, cx2, cy2){
+  const R=R0();
+  particles.forEach((p,i)=>{
+    let t;
+    switch(mode){
+      case 'compress':
+        t=compressPos(cx,cy); break;
+      case 'heart':
+        t=heartPos(i,cx,cy); break;
+      case 'tornado':
+        t=tornadoPos(i,cx,cy); break;
+      case 'gridsphere':{
+        // center between two hands
+        const scx=(cx+cx2)/2, scy=(cy+cy2)/2;
+        const dist=Math.hypot(cx2-cx,cy2-cy);
+        const sr=Math.min(Math.max(dist*0.5,80),R);
+        // rotate by sphereRotY
+        const raw=gridSpherePos(i,0,0,sr);
+        const cosY=Math.cos(sphereRotY), sinY=Math.sin(sphereRotY);
+        const rx=raw.x*cosY-raw.z*sinY;
+        const rz=raw.x*sinY+raw.z*cosY;
+        t={x:scx+rx, y:scy+raw.y, z:rz};
+        break;
+      }
+      default:
+        t=spherePos(i,cx,cy,R); break;
+    }
+    p.setTarget(t.x,t.y,t.z);
+  });
+}
+
+// ─── GESTURE DETECTION ────────────────────────────────────
+function lmX(lm,i){ return (1-lm[i].x)*W; }
+function lmY(lm,i){ return lm[i].y*H; }
+function palmCX(lm){ return (lmX(lm,0)+lmX(lm,9))/2; }
+function palmCY(lm){ return (lmY(lm,0)+lmY(lm,9))/2; }
+
+// Helper: is a finger extended? tip must be above pip joint
+function fingerUp(lm, tip, pip){ return lm[tip].y < lm[pip].y; }
+// Thumb: compare tip x vs ip x (works mirrored)
+function thumbUp(lm){ return Math.abs(lm[4].x-lm[3].x)>0.04; }
+
+function isPinch(lm){
+  const dx=lm[4].x-lm[8].x, dy=lm[4].y-lm[8].y;
+  return Math.sqrt(dx*dx+dy*dy)<0.06;
+}
+function isOpenPalm(lm){
+  let e=0;
+  if(fingerUp(lm,8,6))  e++;
+  if(fingerUp(lm,12,10))e++;
+  if(fingerUp(lm,16,14))e++;
+  if(fingerUp(lm,20,18))e++;
+  return e>=4;
+}
+
+// ✌️ PEACE SIGN → HEART
+// Index + middle UP, ring + pinky DOWN
+function isPeaceSign(lm){
+  const indexUp  = fingerUp(lm,8,6);
+  const middleUp = fingerUp(lm,12,10);
+  const ringDown  = !fingerUp(lm,16,14);
+  const pinkyDown = !fingerUp(lm,20,18);
+  // Index and middle must both be clearly extended
+  const indexExtended  = lm[8].y < lm[5].y - 0.04;
+  const middleExtended = lm[12].y < lm[9].y - 0.04;
+  return indexUp && middleUp && ringDown && pinkyDown && indexExtended && middleExtended;
+}
+
+// ☝️ ONE FINGER → TORNADO
+// Only index up, all others down
+function isIndexPoint(lm){
+  const indexUp   = fingerUp(lm,8,6) && lm[8].y < lm[5].y - 0.05;
+  const middleDown= !fingerUp(lm,12,10);
+  const ringDown  = !fingerUp(lm,16,14);
+  const pinkyDown = !fingerUp(lm,20,18);
+  return indexUp && middleDown && ringDown && pinkyDown;
+}
+
+// ─── DRAW GRID SPHERE WIREFRAME LINES ─────────────────────
+function drawGridSphereWire(cx, cy, R, rotY){
+  ctx.save();
+  ctx.strokeStyle='rgba(100,200,255,0.35)';
+  ctx.lineWidth=0.6;
+  const lats=10, lons=14;
+  for(let la=1;la<lats;la++){
+    const th=(la/lats)*Math.PI;
+    const yr=cy+R*Math.cos(th)*0.75;
+    const xr=R*Math.sin(th);
+    ctx.beginPath();
+    for(let lo=0;lo<=lons;lo++){
+      const ph=(lo/lons)*Math.PI*2+rotY;
+      const px2=cx+xr*Math.cos(ph);
+      if(lo===0) ctx.moveTo(px2,yr); else ctx.lineTo(px2,yr);
+    }
+    ctx.stroke();
+  }
+  for(let lo=0;lo<lons;lo++){
+    const ph=(lo/lons)*Math.PI*2+rotY;
+    ctx.beginPath();
+    for(let la=0;la<=lats;la++){
+      const th=(la/lats)*Math.PI;
+      const px2=cx+R*Math.sin(th)*Math.cos(ph);
+      const py2=cy+R*Math.cos(th)*0.75;
+      if(la===0) ctx.moveTo(px2,py2); else ctx.lineTo(px2,py2);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ─── DRAW HAND SKELETON ───────────────────────────────────
+const CONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function drawHand(lm, col='rgba(200,160,255,0.45)'){
+  ctx.save(); ctx.strokeStyle=col; ctx.lineWidth=1.2;
+  CONN.forEach(([a,b])=>{
+    ctx.beginPath();
+    ctx.moveTo(lmX(lm,a),lmY(lm,a));
+    ctx.lineTo(lmX(lm,b),lmY(lm,b));
+    ctx.stroke();
+  });
+  [0,4,8,12,16,20].forEach(i=>{
+    ctx.beginPath();
+    ctx.arc(lmX(lm,i),lmY(lm,i),i===0?5:3,0,Math.PI*2);
+    ctx.fillStyle=i===0?'rgba(255,100,100,0.8)':'rgba(200,150,255,0.8)';
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+// ─── GESTURE LABEL MESSAGES ───────────────────────────────
+const LABELS={
+  idle:      'MOVE HAND — SPHERE FOLLOWS',
+  compress:  'PINCH — PARTICLES COMPRESSING',
+  burst:     'OPEN PALM — BURST EXPLOSION!',
+  heart:     '✌ PEACE SIGN — HEART SHAPE',
+  tornado:   '☝ ONE FINGER — TORNADO',
+  gridsphere:'TWO HANDS — GRID SPHERE',
+};
+
+// ─── MAIN RENDER ──────────────────────────────────────────
+let lastBurst=false;
+
+function render(){
+  requestAnimationFrame(render);
+  const now=performance.now();
+  fpsArr.push(1000/Math.max(1,now-lastT)); if(fpsArr.length>30)fpsArr.shift(); lastT=now;
+
+  // Faded trail
+  ctx.fillStyle='rgba(0,0,0,0.16)';
+  ctx.fillRect(0,0,W,H);
+
+  const hands = handData?.multiHandLandmarks || [];
+  document.getElementById('hC').textContent=hands.length;
+
+  let attractX=null, attractY=null, attractForce=0;
+  let newMode=currentMode;
+  let gestureStr=LABELS[currentMode]||'—';
+
+  // ── NO HANDS: idle sphere drifts slowly ────────────────
+  if(hands.length===0){
+    newMode='idle';
+    if(currentMode!=='idle'){
+      applyMode('idle',W/2,H/2);
+      currentMode='idle';
+    }
+  }
+
+  // ── ONE HAND ────────────────────────────────────────────
+  else if(hands.length===1){
+    const h=hands[0];
+    const cx=palmCX(h), cy=palmCY(h);
+    const pinch=isPinch(h);
+    const open=isOpenPalm(h);
+    const peace=isPeaceSign(h);
+    const indexPoint=isIndexPoint(h);
+    drawHand(h);
+
+    if(!hintGone){ hintGone=true; hintEl.style.opacity='0'; }
+
+    // Rotation: track hand movement for sphere/tornado spin
+    if(prevHandCx!==null){
+      sphereRotY+=(cx-prevHandCx)*0.012;
+    }
+    prevHandCx=cx; prevHandCy=cy;
+
+    if(pinch){
+      // PINCH → compress all particles to palm
+      newMode='compress';
+      applyMode('compress',cx,cy);
+      currentMode='compress';
+      attractX=cx; attractY=cy; attractForce=-1.5;
+      gestureStr=LABELS.compress;
+      wasPinching=true;
+    } else if(open && wasPinching){
+      // OPEN after PINCH → BURST
+      newMode='burst';
+      currentMode='burst';
+      particles.forEach(p=>p.burst(cx,cy));
+      setTimeout(()=>{ applyMode('idle',W/2,H/2); currentMode='idle'; },1400);
+      wasPinching=false;
+      gestureStr=LABELS.burst;
+    } else if(open && !wasPinching){
+      // fresh open palm → burst
+      if(!lastBurst){
+        lastBurst=true;
+        newMode='burst';
+        particles.forEach(p=>p.burst(cx,cy));
+        setTimeout(()=>{ applyMode('idle',W/2,H/2); currentMode='idle'; lastBurst=false; },1400);
+      }
+      gestureStr=LABELS.burst;
+    } else if(peace){
+      // ✌️ PEACE SIGN → HEART (solid filled, sphere-sized)
+      newMode='heart';
+      if(currentMode!=='heart'){
+        applyMode('heart',cx,cy);
+        currentMode='heart';
+      } else {
+        // keep updating center as hand moves with the hand
+        applyMode('heart',cx,cy);
+      }
+      gestureStr=LABELS.heart;
+      wasPinching=false; lastBurst=false;
+      wasIndex=false;
+    } else if(open && currentMode==='heart'){
+      // OPEN PALM while heart is showing → BURST heart particles
+      if(!lastBurst){
+        lastBurst=true;
+        newMode='burst';
+        currentMode='burst';
+        particles.forEach(p=>p.burst(cx,cy));
+        setTimeout(()=>{ applyMode('idle',W/2,H/2); currentMode='idle'; lastBurst=false; },1400);
+      }
+      gestureStr='OPEN PALM — HEART BURST!';
+    } else if(indexPoint){
+      // ☝️ INDEX ONLY → LIVE SPINNING TORNADO
+      newMode='tornado';
+      // Update tornado center to follow hand every frame
+      tornadoCx = cx;
+      tornadoCy = cy;
+      if(currentMode!=='tornado'){
+        // Init each particle's tornado properties spread across full funnel
+        particles.forEach((p,pi)=>{
+          p.tLevel  = pi / N;                    // distribute evenly top-to-bottom
+          p.tAngle  = (pi / N) * Math.PI * 2 * 12; // spread around funnel
+          p.tSpeed  = 0.04 + Math.random()*0.07;
+        });
+        currentMode='tornado';
+      }
+      gestureStr=LABELS.tornado;
+      wasPinching=false; lastBurst=false;
+    } else {
+      // default — sphere follows hand
+      lastBurst=false;
+      wasPinching=false;
+      newMode='idle';
+      applyMode('idle',cx,cy);
+      currentMode='idle';
+      gestureStr=LABELS.idle;
+    }
+  }
+
+  // ── TWO HANDS → GRID SPHERE ─────────────────────────────
+  else if(hands.length>=2){
+    const h0=hands[0], h1=hands[1];
+    const cx0=palmCX(h0), cy0=palmCY(h0);
+    const cx1=palmCX(h1), cy1=palmCY(h1);
+    drawHand(h0,'rgba(180,140,255,0.5)');
+    drawHand(h1,'rgba(140,200,255,0.5)');
+    if(!hintGone){ hintGone=true; hintEl.style.opacity='0'; }
+
+    // Rotation driven by average hand movement
+    const avgCx=(cx0+cx1)/2;
+    if(prevHandCx!==null) sphereRotY+=(avgCx-prevHandCx)*0.014;
+    prevHandCx=avgCx; prevHandCy=(cy0+cy1)/2;
+
+    newMode='gridsphere';
+    applyMode('gridsphere',cx0,cy0,cx1,cy1);
+    currentMode='gridsphere';
+    gestureStr=LABELS.gridsphere;
+
+    // Draw wireframe on top
+    const scx=(cx0+cx1)/2, scy=(cy0+cy1)/2;
+    const dist=Math.hypot(cx1-cx0,cy1-cy0);
+    const sr=Math.min(Math.max(dist*0.5,80),Math.min(W,H)*0.35);
+    drawGridSphereWire(scx,scy,sr,sphereRotY);
+  }
+
+  // ── UPDATE & DRAW PARTICLES ─────────────────────────────
+  const isTornado = (currentMode==='tornado');
+  particles.forEach(p=>p.update(attractX,attractY,attractForce,tornadoCx,tornadoCy,isTornado));
+  const tornadoOn=(currentMode==='tornado');
+  [...particles].sort((a,b)=>a.z-b.z).forEach(p=>p.draw(tornadoOn));
+
+  // ── HUD update ──────────────────────────────────────────
+  gestureTag.textContent=gestureStr;
+  document.getElementById('gC').textContent=currentMode.toUpperCase();
+  document.getElementById('pC').textContent=N.toLocaleString();
+  document.getElementById('fC').textContent=Math.round(fpsArr.reduce((a,b)=>a+b,0)/fpsArr.length)||0;
+
+  frame++;
+}
+
+// ─── START ────────────────────────────────────────────────
+bBtn.addEventListener('click',async()=>{
+  bBtn.style.display='none';
+  setMsg('REQUESTING CAMERA...'); bar(5);
+
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}}
+    });
+    bgVideo.srcObject=stream;
+    pipVideo.srcObject=stream;
+    bgVideo.style.opacity='0.52';
+    bgVideo.play(); pipVideo.play();
+    setMsg('CAMERA ONLINE'); bar(20);
+  }catch(e){
+    setMsg('CAMERA DENIED — SIMULATION MODE'); bar(20);
+  }
+
+  setMsg('LOADING NEURAL NETWORK...'); bar(35);
+  const hands=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+  hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:0.72,minTrackingConfidence:0.6});
+  hands.onResults(r=>{ handData=r; });
+  await hands.initialize();
+  setMsg('HAND TRACKING ONLINE'); bar(85);
+
+  async function pf(){
+    if(bgVideo.readyState>=2) await hands.send({image:bgVideo});
+    requestAnimationFrame(pf);
+  }
+  pf();
+
+  setMsg('LAUNCHING...'); bar(100);
+
+  // Cinematic fade out
+  setTimeout(()=>{
+    bootEl.style.transition='opacity 1s';
+    bootEl.style.opacity='0';
+    setTimeout(()=>{
+      bootEl.style.display='none';
+      // Show AR UI elements
+      document.getElementById('hud').style.display='block';
+      document.getElementById('pip').style.display='block';
+      document.getElementById('hint').style.display='block';
+      gestureTag.style.display='block';
+    },1050);
+  },400);
+
+  // Init particles in sphere
+  particles.forEach((p,i)=>{
+    const t=spherePos(i,W/2,H/2,R0());
+    p.x=t.x; p.y=t.y; p.z=t.z;
+    p.tx=t.x; p.ty=t.y; p.tz=t.z;
+  });
+  render();
+});
+</script>
+</body>
+</html>
