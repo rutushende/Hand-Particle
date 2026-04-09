@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no"/>
+<title>Elastic Nexus — Moderate Finger Strings</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden;width:100vw;height:100vh;font-family:'Courier New',monospace}
+#container{position:relative;width:100vw;height:100vh}
+#bgVideo{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);z-index:0}
+#arCanvas{position:absolute;top:0;left:0;width:100%;height:100%;z-index:2;pointer-events:none}
+#hud{position:absolute;top:14px;left:16px;z-index:10;pointer-events:none;font-size:11px;color:#00ffaa;letter-spacing:1px;line-height:2;background:rgba(0,0,0,0.5);padding:6px 14px;border-radius:16px;backdrop-filter:blur(4px);border-left:2px solid #00ffaa}
+#hud span{display:block;opacity:0.9}
+#gestureBox{margin-top:6px;font-size:11px;color:#00ffdd;letter-spacing:1.5px;font-weight:bold}
+#bottomLabel{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);font-size:9px;color:rgba(0,255,170,0.6);letter-spacing:2px;z-index:10;pointer-events:none;text-align:center;background:rgba(0,0,0,0.4);padding:5px 14px;border-radius:40px;white-space:nowrap}
+#boot{position:absolute;top:0;left:0;width:100%;height:100%;background:#000;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px}
+.boot-title{font-size:clamp(20px,5vw,46px);color:#00ffaa;letter-spacing:6px;font-weight:bold;text-align:center;text-shadow:0 0 8px #00aa66}
+.boot-sub{font-size:10px;color:#00aa66;letter-spacing:3px;text-align:center}
+#bootLog{width:min(480px,84vw);background:#001a0d;border:1px solid #00aa66;padding:12px;font-size:9px;color:#00ffaa;line-height:1.7;min-height:100px;max-height:150px;overflow-y:auto;font-family:monospace}
+#bootBtn{font-family:'Courier New',monospace;font-size:12px;letter-spacing:3px;padding:10px 28px;background:transparent;border:1.5px solid #00ffaa;color:#00ffaa;cursor:pointer;display:none;transition:0.2s}
+#bootBtn:hover{background:#00ffaa20;box-shadow:0 0 10px #00ffaa40}
+#bootBar{width:min(480px,84vw);height:2px;background:#002a1a}
+#bootFill{height:100%;background:#00ffaa;width:0%;transition:width 0.25s}
+#hint{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:5;text-align:center;pointer-events:none;color:rgba(0,255,170,0.45);font-size:12px;letter-spacing:2px;line-height:2;transition:opacity 1.2s;background:rgba(0,0,0,0.3);padding:10px 20px;border-radius:60px;white-space:nowrap}
+</style>
+</head>
+<body>
+<div id="container">
+  <video id="bgVideo" autoplay muted playsinline></video>
+  <canvas id="arCanvas"></canvas>
+  <div id="hud">
+    <span>🖐️ HANDS: <span id="hCount">0</span></span>
+    <span>⚡ FPS: <span id="fpsEl">0</span></span>
+    <span>〰️ STRINGS: <span id="strCount">0</span></span>
+    <span id="gestureBox">—— IDLE ——</span>
+  </div>
+  <div id="hint">✧ RAISE BOTH HANDS ✧<br><span style="font-size:9px;">each finger → opposite fingers (moderate strings)</span></div>
+  <div id="bottomLabel">⚡ ELASTIC STRINGS • FINGER TO FINGER • MODERATE DENSITY ⚡</div>
+</div>
+
+<div id="boot">
+  <div class="boot-title">⟡ ELASTIC NEXUS ⟡</div>
+  <div class="boot-sub">MODERATE FINGER-TO-FINGER STRINGS</div>
+  <div id="bootBar"><div id="bootFill"></div></div>
+  <div id="bootLog"></div>
+  <button id="bootBtn">[ START CAMERA & TRACKING ]</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script>
+// --- DOM elements ---
+const bgVideo = document.getElementById('bgVideo');
+const arCanvas = document.getElementById('arCanvas');
+const ctx = arCanvas.getContext('2d');
+const bootEl = document.getElementById('boot');
+const bootLog = document.getElementById('bootLog');
+const bootFill = document.getElementById('bootFill');
+const bootBtn = document.getElementById('bootBtn');
+const hintEl = document.getElementById('hint');
+const gestureBox = document.getElementById('gestureBox');
+const hCountEl = document.getElementById('hCount');
+const fpsEl = document.getElementById('fpsEl');
+const strCountEl = document.getElementById('strCount');
+
+let width, height;
+let handData = null;
+let frameCount = 0;
+let fpsHistory = [];
+let lastTimestamp = performance.now();
+let hintActive = true;
+
+// --- Finger landmark indices (MediaPipe) ---
+const FINGER_TIPS = [4, 8, 12, 16, 20];     // thumb, index, middle, ring, pinky
+const FINGER_MID = [3, 7, 11, 15, 19];      // middle joint for extra subtle connections
+
+// Finger colors (neon palette)
+const FINGER_COLORS = [
+  '#ff66cc',  // thumb  - hot pink
+  '#ffdd44',  // index  - electric yellow
+  '#44ffaa',  // middle - mint
+  '#44bbff',  // ring   - cyan
+  '#cc88ff'   // pinky  - lavender
+];
+
+// ========== UTILITIES ==========
+function log(msg) { bootLog.innerHTML += msg + '<br>'; bootLog.scrollTop = bootLog.scrollHeight; }
+function setBar(percent) { bootFill.style.width = percent + '%'; }
+
+// Landmark projection (mirrored for natural selfie view)
+function lmX(lm, idx) { return (1 - lm[idx].x) * width; }
+function lmY(lm, idx) { return lm[idx].y * height; }
+function lmPoint(lm, idx) { return { x: lmX(lm, idx), y: lmY(lm, idx) }; }
+function distance(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
+
+// resize handler
+function handleResize() {
+  width = arCanvas.width = window.innerWidth;
+  height = arCanvas.height = window.innerHeight;
+}
+window.addEventListener('resize', handleResize);
+handleResize();
+
+// ========== GLOWING FINGERTIP DOT ==========
+function drawGlowDot(x, y, radius, color, alpha = 0.9) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = color + '44';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 1.2, 0, Math.PI * 2);
+  ctx.fillStyle = color + 'aa';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.7, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.3, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+// ========== ELASTIC STRING (single fiber bundle with moderate wave) ==========
+// Draws 1 clean curved line with subtle elasticity (moderate number of parallel lines per connection)
+function drawModerateElastic(ax, ay, bx, by, color, lineCount = 3, tension = 0.5) {
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy);
+  if (len < 3) return;
+  const perpX = -dy / len;
+  const perpY = dx / len;
+  const maxOffset = Math.min(len * 0.035, 12); // subtle spread
+  
+  ctx.save();
+  for (let i = 0; i < lineCount; i++) {
+    const tVal = (i / (lineCount - 1)) - 0.5;  // -0.5..0.5
+    const offset = tVal * maxOffset;
+    // wave amplitude: decreases when tension is high (stretched tight)
+    const waveAmp = (1 - Math.min(tension, 0.92)) * 16 * (1 - Math.abs(tVal) * 0.6);
+    const freq = 0.018 + i * 0.005;
+    const phase = frameCount * freq + i * 1.2;
+    
+    const startX = ax + perpX * offset;
+    const startY = ay + perpY * offset;
+    const endX = bx + perpX * offset;
+    const endY = by + perpY * offset;
+    
+    // control point with organic waviness
+    let midX = (startX + endX) / 2;
+    let midY = (startY + endY) / 2;
+    const waveX = perpX * waveAmp * Math.sin(phase);
+    const waveY = perpY * waveAmp * Math.cos(phase * 0.9);
+    midX += waveX + Math.sin(phase * 1.4) * waveAmp * 0.3;
+    midY += waveY + Math.cos(phase * 1.2) * waveAmp * 0.3;
+    
+    const alphaVal = 0.55 + 0.3 * (1 - Math.abs(tVal)) - tension * 0.1;
+    ctx.globalAlpha = Math.min(0.8, Math.max(0.35, alphaVal));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.2 - Math.abs(tVal) * 0.4;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.quadraticCurveTo(midX, midY, endX, endY);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ========== MODERATE FINGER-TO-FINGER CONNECTIONS ==========
+// Each finger tip connects to ALL opposite fingers (5x5 matrix) but with controlled line density
+// Additionaly some mid-joint connections for depth but keeping total string count moderate
+function drawModerateFingerMesh(hand0Lm, hand1Lm, globalTension) {
+  let totalStrings = 0;
+  
+  // PRIMARY CONNECTIONS: each tip of hand0 → each tip of hand1 (25 connections)
+  // Using 3 parallel fibers per connection → 75 strings, clean and readable
+  for (let i = 0; i < FINGER_TIPS.length; i++) {
+    const tipA = lmPoint(hand0Lm, FINGER_TIPS[i]);
+    const colorA = FINGER_COLORS[i];
+    for (let j = 0; j < FINGER_TIPS.length; j++) {
+      const tipB = lmPoint(hand1Lm, FINGER_TIPS[j]);
+      drawModerateElastic(tipA.x, tipA.y, tipB.x, tipB.y, colorA, 3, globalTension);
+      totalStrings += 3;
+    }
+  }
+  
+  // SECONDARY (optional but adds organic feel): middle phalanx connections only for same-finger pairs
+  // This adds extra "depth" without cluttering, giving each finger pair a subtle reinforcement
+  for (let i = 0; i < FINGER_MID.length; i++) {
+    const midA = lmPoint(hand0Lm, FINGER_MID[i]);
+    const midB = lmPoint(hand1Lm, FINGER_MID[i]);
+    const colorMid = FINGER_COLORS[i];
+    drawModerateElastic(midA.x, midA.y, midB.x, midB.y, colorMid + 'cc', 2, globalTension * 0.85);
+    totalStrings += 2;
+  }
+  
+  // SELECTIVE DIAGONAL CROSSES: adds artistic touch without overloading (only 4 cross links)
+  const crossLinks = [
+    [0, 2], [1, 3], [2, 4], [3, 1], [4, 0]
+  ];
+  for (let [idxA, idxB] of crossLinks) {
+    const tipA = lmPoint(hand0Lm, FINGER_TIPS[idxA % 5]);
+    const tipB = lmPoint(hand1Lm, FINGER_TIPS[idxB % 5]);
+    const crossColor = FINGER_COLORS[idxA % 5];
+    drawModerateElastic(tipA.x, tipA.y, tipB.x, tipB.y, crossColor + 'bb', 2, globalTension * 0.9);
+    totalStrings += 2;
+  }
+  
+  return totalStrings;
+}
+
+// ========== WIREFRAME VOLUME (ambient) ==========
+function drawWireframeVolume(hand0, hand1, borderColor) {
+  const wrist0 = lmPoint(hand0, 0);
+  const wrist1 = lmPoint(hand1, 0);
+  const mid0 = lmPoint(hand0, 12);
+  const mid1 = lmPoint(hand1, 12);
+  const depth = 55;
+  const corners = [
+    wrist0, mid0, mid1, wrist1,
+    {x: wrist0.x, y: wrist0.y - depth}, {x: mid0.x, y: mid0.y - depth},
+    {x: mid1.x, y: mid1.y - depth}, {x: wrist1.x, y: wrist1.y - depth}
+  ];
+  const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  ctx.save();
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.45;
+  edges.forEach(([a,b]) => {
+    ctx.beginPath();
+    ctx.moveTo(corners[a].x, corners[a].y);
+    ctx.lineTo(corners[b].x, corners[b].y);
+    ctx.stroke();
+  });
+  corners.forEach(c => {
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 2, 0, Math.PI*2);
+    ctx.fillStyle = '#88ffcc';
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+// ========== HAND SKELETON (subtle) ==========
+function drawSkeleton(lm, tintColor) {
+  const connections = [
+    [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8],
+    [5,9],[9,10],[10,11],[11,12], [9,13],[13,14],[14,15],[15,16],
+    [13,17],[17,18],[18,19],[19,20], [0,17]
+  ];
+  ctx.save();
+  ctx.strokeStyle = tintColor;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.4;
+  connections.forEach(([a,b]) => {
+    ctx.beginPath();
+    ctx.moveTo(lmX(lm,a), lmY(lm,a));
+    ctx.lineTo(lmX(lm,b), lmY(lm,b));
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// ========== GESTURE DETECTION ==========
+function detectPinch(lm) {
+  const thumb = lmPoint(lm, 4);
+  const index = lmPoint(lm, 8);
+  return distance(thumb, index) < width * 0.045;
+}
+function detectOpenPalm(lm) {
+  let extended = 0;
+  if(lm[8].y < lm[6].y) extended++;
+  if(lm[12].y < lm[10].y) extended++;
+  if(lm[16].y < lm[14].y) extended++;
+  if(lm[20].y < lm[18].y) extended++;
+  return extended >= 3;
+}
+
+// ========== MAIN RENDER LOOP ==========
+let totalStringCounter = 0;
+
+function renderFrame() {
+  requestAnimationFrame(renderFrame);
+  
+  const now = performance.now();
+  const delta = Math.max(1, now - lastTimestamp);
+  const instantFps = 1000 / delta;
+  fpsHistory.push(instantFps);
+  if (fpsHistory.length > 30) fpsHistory.shift();
+  lastTimestamp = now;
+  const avgFps = Math.round(fpsHistory.reduce((a,b)=>a+b,0)/fpsHistory.length);
+  
+  ctx.clearRect(0, 0, width, height);
+  
+  if (!handData || !handData.multiHandLandmarks || handData.multiHandLandmarks.length === 0) {
+    gestureBox.innerText = '⦿ NO HANDS DETECTED';
+    hCountEl.innerText = '0';
+    strCountEl.innerText = '0';
+    fpsEl.innerText = avgFps;
+    frameCount++;
+    return;
+  }
+  
+  if (hintActive) {
+    hintActive = false;
+    hintEl.style.opacity = '0';
+  }
+  
+  const landmarks = handData.multiHandLandmarks;
+  hCountEl.innerText = landmarks.length;
+  
+  // Single hand case: just show skeleton & dots (no strings)
+  if (landmarks.length === 1) {
+    const singleHand = landmarks[0];
+    drawSkeleton(singleHand, '#77ffcc');
+    FINGER_TIPS.forEach((tip, idx) => {
+      const pt = lmPoint(singleHand, tip);
+      drawGlowDot(pt.x, pt.y, 5, FINGER_COLORS[idx], 0.85);
+    });
+    gestureBox.innerText = '✋ ONE HAND — RAISE SECOND';
+    strCountEl.innerText = '0';
+    fpsEl.innerText = avgFps;
+    frameCount++;
+    return;
+  }
+  
+  // ---- TWO HANDS ACTIVE ----
+  const handLeft = landmarks[0];
+  const handRight = landmarks[1];
+  
+  // Draw subtle skeletons
+  drawSkeleton(handLeft, '#aaffdd');
+  drawSkeleton(handRight, '#aaffdd');
+  
+  // Draw glowing fingertips for both hands
+  FINGER_TIPS.forEach((tip, idx) => {
+    const ptL = lmPoint(handLeft, tip);
+    const ptR = lmPoint(handRight, tip);
+    drawGlowDot(ptL.x, ptL.y, 5.2, FINGER_COLORS[idx], 0.95);
+    drawGlowDot(ptR.x, ptR.y, 5.2, FINGER_COLORS[idx], 0.95);
+  });
+  
+  // Compute global stretch tension based on wrist distance
+  const wristL = lmPoint(handLeft, 0);
+  const wristR = lmPoint(handRight, 0);
+  const wristDistance = distance(wristL, wristR);
+  const maxWristDist = width * 0.68;
+  const tension = Math.min(wristDistance / maxWristDist, 1.0);
+  
+  // ★ MAIN FEATURE: Each finger to all opposite fingers (moderate density) ★
+  let totalStrings = drawModerateFingerMesh(handLeft, handRight, tension);
+  
+  // Additional wrist-to-fingertips connections for atmospheric depth (subtle)
+  for (let i = 0; i < FINGER_TIPS.length; i++) {
+    const tipR = lmPoint(handRight, FINGER_TIPS[i]);
+    drawModerateElastic(wristL.x, wristL.y, tipR.x, tipR.y, FINGER_COLORS[i] + '99', 2, tension * 0.7);
+    totalStrings += 2;
+    const tipL = lmPoint(handLeft, FINGER_TIPS[i]);
+    drawModerateElastic(wristR.x, wristR.y, tipL.x, tipL.y, FINGER_COLORS[i] + '99', 2, tension * 0.7);
+    totalStrings += 2;
+  }
+  
+  // Draw ambient wireframe box with dynamic color
+  const pinchL = detectPinch(handLeft);
+  const pinchR = detectPinch(handRight);
+  const boxColor = (pinchL || pinchR) ? '#ff8866' : '#66ffdd';
+  drawWireframeVolume(handLeft, handRight, boxColor);
+  
+  // Gesture feedback
+  let gestureMsg = '';
+  if (pinchL && pinchR) gestureMsg = '⚡ DUAL PINCH • MAX TENSION ⚡';
+  else if (pinchL || pinchR) gestureMsg = '🌀 SINGLE PINCH • ELASTIC SNAP 🌀';
+  else gestureMsg = '✧ OPEN HANDS • MODERATE STRINGS ✧';
+  gestureBox.innerText = gestureMsg;
+  gestureBox.style.color = (pinchL || pinchR) ? '#ffaa77' : '#88ffdd';
+  
+  // Update HUD counters
+  totalStringCounter = totalStrings;
+  strCountEl.innerText = totalStringCounter;
+  fpsEl.innerText = avgFps;
+  
+  // Extra info overlay on canvas (subtle)
+  ctx.font = '9px "Courier New"';
+  ctx.fillStyle = '#aaffdd';
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 0.7;
+  ctx.fillText(`FINGER PAIRS: 25`, 16, 48);
+  ctx.fillText(`STRINGS: ${totalStringCounter}`, 16, 64);
+  
+  frameCount++;
+}
+
+// ========== BOOT SEQUENCE ==========
+const bootSteps = [
+  [200,  '> ELASTIC STRING SYSTEM v2 • MODERATE MODE', 6],
+  [500,  '> FINGER-TO-FINGER MESH: 5x5 CONNECTIONS', 18],
+  [850,  '> LOADING MEDIAPIPE HAND TRACKER...', 32],
+  [1250, '> EACH FINGER CONNECTS TO ALL OPPOSITE FINGERS', 48],
+  [1650, '> OPTIMIZED PARALLEL STRINGS (3 FIBERS PER PAIR)', 64],
+  [2050, '> DYNAMIC TENSION & WAVE PHYSICS: ONLINE', 78],
+  [2450, '> CAMERA MODULE: READY', 88],
+  [2850, '> ALL SYSTEMS ACTIVE — RAISE BOTH HANDS', 100],
+];
+bootSteps.forEach(([delay, msg, perc]) => {
+  setTimeout(() => { log(msg); setBar(perc); }, delay);
+});
+setTimeout(() => { bootBtn.style.display = 'block'; }, 3100);
+
+// ========== CAMERA & MEDIAPIPE INIT ==========
+bootBtn.addEventListener('click', async () => {
+  bootBtn.style.display = 'none';
+  log('> REQUESTING CAMERA ACCESS...');
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    bgVideo.srcObject = stream;
+    await new Promise(r => bgVideo.onloadedmetadata = r);
+    bgVideo.play();
+    log('> CAMERA ONLINE: ' + (stream.getVideoTracks()[0]?.label || 'webcam'));
+  } catch (err) {
+    log('> CAMERA ERROR: ' + err.message);
+    log('> CONTINUING WITHOUT VIDEO FEED (tracking will fail)');
+  }
+  
+  log('> INITIALIZING HANDS MODEL...');
+  setBar(45);
+  
+  const handsModel = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  });
+  handsModel.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.55
+  });
+  handsModel.onResults(results => { handData = results; });
+  await handsModel.initialize();
+  log('> HAND TRACKER READY • 21 LANDMARKS PER HAND');
+  setBar(95);
+  
+  async function processVideoFrame() {
+    if (bgVideo.readyState >= 2) {
+      await handsModel.send({ image: bgVideo });
+    }
+    requestAnimationFrame(processVideoFrame);
+  }
+  processVideoFrame();
+  
+  log('> MODERATE STRING MODE ACTIVE: each finger connects to all opposite fingers');
+  log('> TOTAL STRINGS: ~75-90 • CLEAN & RESPONSIVE');
+  setBar(100);
+  
+  setTimeout(() => {
+    bootEl.style.transition = 'opacity 0.7s';
+    bootEl.style.opacity = '0';
+    setTimeout(() => bootEl.style.display = 'none', 800);
+  }, 550);
+  
+  renderFrame();
+});
+</script>
+</body>
+</html>
